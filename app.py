@@ -3,30 +3,23 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 import plotly.express as px
-import plotly.graph_objects as go
 
-# Configuração estética da página
+# Configuração da página
 st.set_page_config(
-    page_title="Lumina IA | Auditoria Avançada",
+    page_title="Audit | Inteligência em Auditoria",
     page_icon="🛡️",
     layout="wide"
 )
 
-# Estilização customizada via CSS
-st.markdown("""
-    <style>
-    .main { background-color: #f8f9fa; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    </style>
-    """, unsafe_allow_html=True)
-
 def main():
-    st.title("🛡️ Lumina IA - Auditoria de Inconsistências")
-    st.subheader("Análise Estatística de Guias Médicas")
+    st.title("🛡️ Audit")
+    st.subheader("Plataforma de Inteligência e Detecção de Inconsistências")
 
     # --- SIDEBAR ---
-    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2761/2761131.png", width=100)
-    st.sidebar.header("Configurações de Auditoria")
+    st.sidebar.header("Configurações")
+    
+    # Upload de arquivo
+    uploaded_file = st.sidebar.file_uploader("Anexe seu banco de dados (CSV ou Excel)", type=["csv", "xlsx"])
     
     z_threshold = st.sidebar.slider(
         "Rigor da Auditoria (Z-Score)",
@@ -34,87 +27,104 @@ def main():
         max_value=4.0,
         value=2.5,
         step=0.1,
-        help="Quanto maior o Z-Score, mais 'estranha' a guia deve ser para ser marcada."
+        help="Define o limite estatístico para considerar uma guia inconsistente."
     )
 
-    # Cálculo da porcentagem teórica (Distribuição Normal)
+    # Cálculo da porcentagem teórica
     prob_teorica = stats.norm.sf(z_threshold) * 100
+    st.sidebar.info(f"Filtro atual: Top {prob_teorica:.2f}% de inconsistências.")
 
-    st.sidebar.info(f"""
-    **Filtro Atual:**
-    - Detectando o topo **{prob_teorica:.2f}%** das anomalias.
-    - Guias acima de **{z_threshold} desvios padrões** da média.
-    """)
-
-    # --- GERAÇÃO DE DADOS (Simulação Pró) ---
-    @st.cache_data
-    def load_data():
+    # --- CARREGAMENTO DE DADOS ---
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            st.success("Arquivo carregado com sucesso!")
+        except Exception as e:
+            st.error(f"Erro ao ler o arquivo: {e}")
+            return
+    else:
+        # Dados de exemplo caso nenhum arquivo seja anexado
+        st.warning("Aguardando upload de dados. Usando base de exemplo abaixo...")
         np.random.seed(42)
-        n_guias = 1000
-        # Simula custos médicos (distribuição log-normal é mais realista para custos)
-        custos = np.random.lognormal(mean=6, sigma=0.8, size=n_guias)
+        n = 500
         df = pd.DataFrame({
-            'ID_Guia': [f"G-{i:05d}" for i in range(n_guias)],
-            'Valor_R$': custos,
-            'Prestador': np.random.choice(['Clínica A', 'Hospital B', 'Laboratório C', 'Clínica D'], n_guias)
+            'ID_Guia': [f"G-{i:05d}" for i in range(n)],
+            'Valor_R$': np.random.lognormal(6, 0.8, n),
+            'Prestador': np.random.choice(['Clínica A', 'Hospital B', 'Laboratório C'], n)
         })
-        return df
 
-    df = load_data()
+    # Verificação de colunas necessárias
+    if 'Valor_R$' not in df.columns:
+        st.error("O arquivo deve conter uma coluna chamada 'Valor_R$'")
+        return
 
-    # Cálculo do Z-Score Real
+    # --- PROCESSAMENTO ESTATÍSTICO ---
+    # Cálculo do Z-Score
     df['z_score'] = (df['Valor_R$'] - df['Valor_R$'].mean()) / df['Valor_R$'].std()
-    anomalias = df[df['z_score'] > z_threshold].copy()
+    df['Status'] = np.where(df['z_score'] > z_threshold, 'Inconsistente', 'Normal')
+    
+    anomalias = df[df['Status'] == 'Inconsistente'].copy()
 
-    # --- DASHBOARD ---
+    # --- MÉTRICAS ---
     m1, m2, m3 = st.columns(3)
     with m1:
-        st.metric("Total de Guias", f"{len(df)}")
+        st.metric("Total Analisado", len(df))
     with m2:
-        st.metric("Inconsistências", f"{len(anomalias)}", delta=f"{len(anomalias)/len(df)*100:.1f}%", delta_color="inverse")
+        st.metric("Inconsistências", len(anomalias), delta=f"{len(anomalias)/len(df)*100:.1f}%", delta_color="inverse")
     with m3:
-        st.metric("Volume em Risco", f"R$ {anomalias['Valor_R$'].sum():,.2f}")
+        st.metric("Valor sob Suspeita", f"R$ {anomalias['Valor_R$'].sum():,.2f}")
 
     st.divider()
 
-    col_graph1, col_graph2 = st.columns(2)
+    # --- GRÁFICOS ---
+    col1, col2 = st.columns(2)
 
-    with col_graph1:
-        st.write("### Distribuição de Custos")
-        # Gráfico de Histograma Elegante
+    with col1:
+        # Histograma
         fig_hist = px.histogram(
             df, x="Valor_R$", 
-            nbins=50, 
-            color_discrete_sequence=['#636EFA'],
-            title="Frequência de Valores de Guias",
-            labels={'Valor_R$': 'Valor da Guia (R$)'}
+            color="Status",
+            color_discrete_map={"Normal": "#636EFA", "Inconsistente": "#EF553B"},
+            title="Distribuição de Valores e Alvos da Auditoria",
+            labels={'Valor_R$': 'Valor (R$)'},
+            nbins=30
         )
-        # Linha indicando onde começa a anomalia
-        threshold_value = (z_threshold * df['Valor_R$'].std()) + df['Valor_R$'].mean()
-        fig_hist.add_vline(x=threshold_value, line_dash="dash", line_color="red", annotation_text="Limite IA")
         st.plotly_chart(fig_hist, use_container_width=True)
 
-    with col_graph2:
-        st.write("### Análise de Dispersão (Outliers)")
-        # Gráfico de Dispersão
-        df['Status'] = np.where(df['z_score'] > z_threshold, 'Inconsistente', 'Normal')
+    with col2:
+        # Dispersão (Correção do erro de TYPEERROR aqui)
         fig_scatter = px.scatter(
-            df, x="ID_Guia", y="Valor_R$", 
+            df, 
+            x=df.index, 
+            y="Valor_R$", 
             color="Status",
-            color_manual={"Normal": "#636EFA", "Inconsistente": "#EF553B"},
-            title="Dispersão de Guias por Valor",
-            hover_data=['Prestador', 'z_score']
+            color_discrete_map={"Normal": "#636EFA", "Inconsistente": "#EF553B"},
+            title="Dispersão Geral de Guias",
+            hover_data=['ID_Guia', 'Prestador', 'z_score'] if 'ID_Guia' in df.columns else ['Valor_R$']
         )
         st.plotly_chart(fig_scatter, use_container_width=True)
 
-    st.write("### 📋 Detalhamento das Guias Suspeitas")
+    # --- TABELA DETALHADA ---
+    st.write("### 🔍 Detalhamento de Inconsistências")
     if not anomalias.empty:
         st.dataframe(
-            anomalias.sort_values(by='Valor_R$', ascending=False).style.format({'Valor_R$': 'R$ {:.2f}', 'z_score': '{:.2f}'}),
+            anomalias.sort_values(by='z_score', ascending=False),
             use_container_width=True
         )
+        
+        # Botão para baixar resultados
+        csv = anomalias.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Baixar Relatório de Inconsistências (CSV)",
+            data=csv,
+            file_name='relatorio_audit.csv',
+            mime='text/csv',
+        )
     else:
-        st.success("Nenhuma irregularidade detectada com o rigor atual.")
+        st.success("Nenhuma guia ultrapassou o limite de segurança estabelecido.")
 
 if __name__ == "__main__":
     main()
